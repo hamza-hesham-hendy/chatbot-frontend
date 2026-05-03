@@ -1,0 +1,248 @@
+const chatArea = document.getElementById("chat-area");
+const input = document.getElementById("message-input");
+const sendBtn = document.getElementById("send-btn");
+const settingsBtn = document.getElementById("settings-btn");
+const settingsPanel = document.getElementById("settings-panel");
+const settingsSave = document.getElementById("settings-save");
+const settingsCancel = document.getElementById("settings-cancel");
+const clearBtn = document.getElementById("clear-btn");
+const apiUrlInput = document.getElementById("api-url");
+const apiEndpointInput = document.getElementById("api-endpoint");
+
+const STORAGE_KEY = "serenity_settings";
+const defaults = { apiUrl: "http://localhost:8000", endpoint: "/chat" };
+
+function loadSettings() {
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(STORAGE_KEY)) };
+  } catch {
+    return { ...defaults };
+  }
+}
+
+function saveSettings(s) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+let settings = loadSettings();
+
+// ── Settings panel ──
+
+settingsBtn.addEventListener("click", () => {
+  const open = settingsPanel.classList.toggle("open");
+  if (open) {
+    apiUrlInput.value = settings.apiUrl;
+    apiEndpointInput.value = settings.endpoint;
+    apiUrlInput.focus();
+  }
+});
+
+settingsCancel.addEventListener("click", () =>
+  settingsPanel.classList.remove("open")
+);
+
+settingsSave.addEventListener("click", () => {
+  settings.apiUrl = apiUrlInput.value.replace(/\/+$/, "") || defaults.apiUrl;
+  settings.endpoint = apiEndpointInput.value || defaults.endpoint;
+  saveSettings(settings);
+  settingsPanel.classList.remove("open");
+});
+
+// ── Input handling ──
+
+input.addEventListener("input", () => {
+  sendBtn.disabled = !input.value.trim();
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 120) + "px";
+});
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (input.value.trim()) send();
+  }
+});
+
+sendBtn.addEventListener("click", send);
+
+// ── Quick prompts ──
+
+document.addEventListener("click", (e) => {
+  if (e.target.classList.contains("prompt-chip")) {
+    input.value = e.target.dataset.prompt;
+    input.dispatchEvent(new Event("input"));
+    send();
+  }
+});
+
+// ── Clear chat ──
+
+clearBtn.addEventListener("click", () => {
+  chatArea.innerHTML = `
+    <div class="welcome">
+      <div class="welcome-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 21C12 21 4 15 4 9.5C4 6.46 6.46 4 9.5 4C11.06 4 12.45 4.74 12 5.5C11.55 4.74 12.94 4 14.5 4C17.54 4 20 6.46 20 9.5C20 15 12 21 12 21Z"/>
+        </svg>
+      </div>
+      <h2>Welcome to Serenity</h2>
+      <p>A safe space to talk about how you're feeling. I'm here to listen and help with questions about anxiety, depression, stress, and more.</p>
+      <div class="quick-prompts">
+        <button class="prompt-chip" data-prompt="I've been feeling really anxious lately">Feeling anxious</button>
+        <button class="prompt-chip" data-prompt="How can I manage stress at work?">Managing stress</button>
+        <button class="prompt-chip" data-prompt="I'm having trouble sleeping because of my worries">Trouble sleeping</button>
+        <button class="prompt-chip" data-prompt="What are some coping strategies for depression?">Coping strategies</button>
+      </div>
+    </div>`;
+});
+
+// ── Chat logic ──
+
+function removeWelcome() {
+  const welcome = chatArea.querySelector(".welcome");
+  if (welcome) welcome.remove();
+}
+
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = `message ${role}`;
+
+  const avatarLabel = role === "user" ? "You" : "S";
+  div.innerHTML = `
+    <div class="avatar">${avatarLabel}</div>
+    <div class="bubble">${escapeHtml(text)}</div>`;
+
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  return div;
+}
+
+function addBotMessage(text, metadata) {
+  const div = document.createElement("div");
+  div.className = "message bot";
+
+  let metaHtml = "";
+  if (metadata) {
+    const tags = [];
+    if (metadata.language)
+      tags.push(
+        `<span class="meta-tag"><span class="label">Lang</span> ${escapeHtml(metadata.language)}</span>`
+      );
+    if (metadata.emotion)
+      tags.push(
+        `<span class="meta-tag"><span class="label">Emotion</span> ${escapeHtml(metadata.emotion)}</span>`
+      );
+    if (metadata.intent)
+      tags.push(
+        `<span class="meta-tag"><span class="label">Intent</span> ${escapeHtml(metadata.intent)}</span>`
+      );
+    if (tags.length) metaHtml = `<div class="meta-tags">${tags.join("")}</div>`;
+  }
+
+  div.innerHTML = `
+    <div class="avatar">S</div>
+    <div class="bubble">${escapeHtml(text)}${metaHtml}</div>`;
+
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function addError(text) {
+  const div = document.createElement("div");
+  div.className = "message bot";
+  div.innerHTML = `
+    <div class="avatar">S</div>
+    <div class="bubble error-bubble">${escapeHtml(text)}</div>`;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function showTyping() {
+  const div = document.createElement("div");
+  div.className = "message bot";
+  div.id = "typing";
+  div.innerHTML = `
+    <div class="avatar">S</div>
+    <div class="bubble">
+      <div class="typing-indicator"><span></span><span></span><span></span></div>
+    </div>`;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function hideTyping() {
+  const el = document.getElementById("typing");
+  if (el) el.remove();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text) return;
+
+  removeWelcome();
+  addMessage("user", text);
+
+  input.value = "";
+  input.style.height = "auto";
+  sendBtn.disabled = true;
+  input.focus();
+
+  showTyping();
+
+  try {
+    const url = settings.apiUrl + settings.endpoint;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text }),
+    });
+
+    hideTyping();
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(
+        `Server returned ${res.status}${errText ? ": " + errText : ""}`
+      );
+    }
+
+    const data = await res.json();
+
+    // Flexible response parsing — adapts to common API shapes:
+    //   { response: "..." }
+    //   { answer: "..." }
+    //   { message: "..." }
+    //   { response: "...", language: "...", emotion: "...", intent: "..." }
+    const reply =
+      data.response || data.answer || data.message || data.reply || data.text;
+
+    const metadata = {
+      language: data.language || data.detected_language,
+      emotion: data.emotion || data.detected_emotion,
+      intent: data.intent || data.detected_intent,
+    };
+
+    const hasMetadata = metadata.language || metadata.emotion || metadata.intent;
+
+    if (reply) {
+      addBotMessage(reply, hasMetadata ? metadata : null);
+    } else {
+      addBotMessage(JSON.stringify(data, null, 2));
+    }
+  } catch (err) {
+    hideTyping();
+    if (err.name === "TypeError" && err.message === "Failed to fetch") {
+      addError(
+        `Could not connect to ${settings.apiUrl}. Make sure your backend is running and CORS is enabled.`
+      );
+    } else {
+      addError(err.message);
+    }
+  }
+}
