@@ -226,6 +226,11 @@ async function send() {
     hideTyping();
 
     if (!res.ok) {
+      if (res.status === 429) {
+        throw new Error(
+          "You're sending messages too quickly. Please wait a moment and try again."
+        );
+      }
       const errText = await res.text().catch(() => "");
       throw new Error(
         `Server returned ${res.status}${errText ? ": " + errText : ""}`
